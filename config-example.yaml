@@ -1,0 +1,37 @@
+env: dev
+catalog:
+  db_path: "/var/lib/music-catalog/catalog.db"
+  state_dir: "/var/lib/music-catalog/state"
+report:
+  out_dir: "/var/lib/music-catalog/reports"
+roots:
+  - path: "/home/dl/drobos/hibiki/Media/Music/Lossless"
+    tiers:
+      - name: "DSD"
+        dir: "DSD"
+        expect:
+          container_codecs: ["DSF"]
+          dsd_rates: ["DSD64", "DSD128", "DSD256"]
+      - name: "FLAC_Redbook"
+        dir: "FLAC 16-Bit CD"
+        expect:
+          container_codecs: ["FLAC"]
+          bit_depth: [16]
+          sample_rates_hz: [44100, 48000]
+      - name: "FLAC_HiRes"
+        dir: "FLAC 24-Bit HiRes"
+        expect:
+          container_codecs: ["FLAC"]
+          bit_depth: [24]
+          sample_rates_hz_min: 44100
+scan:
+  concurrency: 4
+  ignore_patterns: ["@eaDir", ".*", "Thumbs.db"]
+  boxset_wrappers: ["Box Sets", "Boxsets"]
+audits:
+  enforce_tier_rules: true
+  require_disctotal_when_multidisc: true
+  replaygain_all_or_none: true
+normalization:
+  unicode: "NFC"
+  casefold_locale: "en"

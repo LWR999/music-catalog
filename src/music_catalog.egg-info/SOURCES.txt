@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+src/music_catalog/__init__.py
+src/music_catalog/cli.py
+src/music_catalog/config.py
+src/music_catalog/db.py
+src/music_catalog/inventory.py
+src/music_catalog.egg-info/PKG-INFO
+src/music_catalog.egg-info/SOURCES.txt
+src/music_catalog.egg-info/dependency_links.txt
+src/music_catalog.egg-info/entry_points.txt
+src/music_catalog.egg-info/requires.txt
+src/music_catalog.egg-info/top_level.txt

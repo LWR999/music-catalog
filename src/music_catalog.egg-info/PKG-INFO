@@ -1,0 +1,23 @@
+Metadata-Version: 2.4
+Name: music-catalog
+Version: 0.0.1
+Summary: Music library cataloger/auditor (read-only) for NAS-based FLAC/DSD libraries
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: typer>=0.12
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: mutagen>=1.47
+Requires-Dist: xxhash>=3.4
+Requires-Dist: rich>=13.7
+
+# music-catalog (v0)
+
+Read-only indexer for NAS-based libraries. Manual commands only.
+
+## Commands
+- `mc migrate` — create/upgrade SQLite schema
+- `mc inventory fast --config /home/dl/development/.config/music-catalog/dev.yaml`
+- `mc inventory deep --config /home/dl/development/.config/music-catalog/dev.yaml`
+
+## Config
+Copy `config-example.yaml` to `/home/dl/development/.config/music-catalog/dev.yaml` and edit paths.

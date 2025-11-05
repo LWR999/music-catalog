@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "music-catalog"
+version = "0.0.1"
+description = "Music library cataloger/auditor (read-only) for NAS-based FLAC/DSD libraries"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12",
+  "pyyaml>=6.0",
+  "mutagen>=1.47",
+  "xxhash>=3.4",
+  "rich>=13.7",
+]
+
+[project.scripts]
+mc = "music_catalog.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
