@@ -218,23 +218,19 @@ def _producer(paths_q: Queue, roots: List[str], ignore_dirs: Optional[List[str]]
             for p in iter_audio_files(root, ignore_dirs=ignore_dirs):
                 paths_q.put(p)
     finally:
-        # signal end-of-stream by placing one sentinel per worker to be consumed later by caller
-        pass  # caller will enqueue sentinels
+        pass  # sentinels inserted by caller
 
 
 def _worker(paths_q: Queue, infos_q: Queue):
     while True:
         p = paths_q.get()
-        if p is None:  # sentinel
+        if p is None:
             paths_q.task_done()
             break
         try:
             fi = quick_probe(Path(p))
             infos_q.put(fi)
-        except Exception as e:
-            # Represent errors as a FastInfo with minimal data and mark codec as 'ERROR'
-            # (writer can choose to skip or log; for now we skip silently)
-            # You could also push a side-channel log here.
+        except Exception:
             pass
         finally:
             paths_q.task_done()
@@ -248,43 +244,29 @@ def fast_index_threaded(
     batch_size: int = 1000,
     progress_every: int = 2000,
 ) -> int:
-    """
-    Threaded fast pass:
-      - 1 producer walks the tree
-      - N workers probe headers
-      - 1 writer (this thread) upserts in batches within a single transaction
-    Returns number of files processed.
-    """
-    start_wall = time.time()
     paths_q: Queue = Queue(maxsize=2000)
     infos_q: Queue = Queue(maxsize=2000)
 
-    # Start producer
     prod = Thread(target=_producer, args=(paths_q, roots, ignore_dirs), daemon=True)
     prod.start()
 
-    # Start workers
-    workers = max(1, int(workers))
     threads: List[Thread] = []
-    for _ in range(workers):
+    for _ in range(max(1, int(workers))):
         t = Thread(target=_worker, args=(paths_q, infos_q), daemon=True)
         t.start()
         threads.append(t)
 
     processed = 0
     last_print = time.time()
+    start_wall = last_print
 
-    # DB optimizations for bulk ingest
     con.execute("PRAGMA synchronous=NORMAL;")
     con.execute("BEGIN;")
 
-    # Keep consuming until producer is done and all workers have drained
-    producer_done = False
     while True:
         try:
             fi = infos_q.get(timeout=0.5)
         except Empty:
-            # If producer thread finished and queue is empty and all workers are idle / finished, we break
             if not prod.is_alive() and paths_q.unfinished_tasks == 0:
                 break
             continue
@@ -296,7 +278,6 @@ def fast_index_threaded(
             con.commit()
             con.execute("BEGIN;")
 
-        # lightweight progress ticker
         if processed % progress_every == 0 or (time.time() - last_print) > 10:
             last_print = time.time()
             elapsed = max(last_print - start_wall, 1e-6)
@@ -306,15 +287,246 @@ def fast_index_threaded(
 
         infos_q.task_done()
 
-    # Send sentinels to workers now that producer is done and all paths consumed
     for _ in threads:
         paths_q.put(None)
-    paths_q.join()  # ensure workers exit
-
-    # Join worker threads
+    paths_q.join()
     for t in threads:
         t.join()
 
-    # Final commit
     con.commit()
     return processed
+
+
+# -------------------------
+# CHANGE-ONLY inventory
+# -------------------------
+
+@dataclass
+class StatEntry:
+    album_id: int
+    album_folder: str
+    relpath: str          # relative to album folder
+    abspath: str
+    size: int
+    mtime_ns: int
+
+
+def _album_root_and_rel(p: Path) -> Tuple[int, str, str]:
+    """Return (album_id, album_folder, relative_path) for a given audio file path."""
+    parent = p.parent
+    parent_name = parent.name
+    m = DISC_FOLDER_RE.match(parent_name)
+    if m:
+        album_folder = parent.parent
+        rel = f"{parent.name}/{p.name}"
+    else:
+        album_folder = parent
+        rel = p.name
+    aid = album_id_from_path(str(album_folder))
+    return aid, str(album_folder), rel
+
+
+def changed_collect_stats(
+    roots: List[str],
+    ignore_dirs: Optional[List[str]],
+    debounce_sec: int,
+) -> Dict[int, List[StatEntry]]:
+    """Walk roots, stat audio files, group them by album_id."""
+    cutoff_ns = (time.time() - max(0, debounce_sec)) * 1e9
+    albums: Dict[int, List[StatEntry]] = {}
+    for root in roots:
+        for p in iter_audio_files(root, ignore_dirs=ignore_dirs):
+            st = p.stat()
+            if st.st_mtime_ns > cutoff_ns:
+                # debounce: skip very-recent writes
+                continue
+            aid, afolder, rel = _album_root_and_rel(p)
+            albums.setdefault(aid, []).append(
+                StatEntry(
+                    album_id=aid,
+                    album_folder=afolder,
+                    relpath=rel,
+                    abspath=str(p),
+                    size=st.st_size,
+                    mtime_ns=st.st_mtime_ns,
+                )
+            )
+    return albums
+
+
+def fingerprint_album(entries: List[StatEntry]) -> Tuple[str, int]:
+    """Compute stable fingerprint from relpath|size|mtime_ns lines."""
+    lines = [f"{e.relpath}|{e.size}|{e.mtime_ns}" for e in entries]
+    lines.sort()
+    s = "\n".join(lines)
+    # xxh3 via xxhash for speed; hex string
+    fp = xxhash.xxh3_128_hexdigest(s.encode("utf-8"))
+    return fp, len(entries)
+
+
+def ensure_album_row(con: sqlite3.Connection, album_id: int, album_folder: str):
+    folder_artist, folder_title = parse_album_folder(album_folder)
+    con.execute(
+        """
+        INSERT INTO album (id, folder_path, folder_artist, folder_title, status, updated_at)
+        VALUES (?, ?, ?, ?, 'PARTIAL', datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+          folder_path = excluded.folder_path,
+          folder_artist = COALESCE(excluded.folder_artist, album.folder_artist),
+          folder_title  = COALESCE(excluded.folder_title,  album.folder_title),
+          updated_at    = datetime('now')
+        """,
+        (album_id, album_folder, folder_artist, folder_title),
+    )
+
+
+def changed_apply_album(
+    con: sqlite3.Connection,
+    run_id: int,
+    album_id: int,
+    album_folder: str,
+    entries: List[StatEntry],
+):
+    """Apply change-only logic for a single album."""
+    ensure_album_row(con, album_id, album_folder)
+
+    # Get previous fingerprint (if any)
+    row = con.execute("SELECT album_fingerprint FROM album WHERE id=?", (album_id,)).fetchone()
+    prev_fp = row[0] if row else None
+
+    fp, count = fingerprint_album(entries)
+
+    if prev_fp == fp:
+        # Skip per-file; mark album tracks seen
+        con.execute(
+            "UPDATE track SET seen_run_id=?, is_missing=0 WHERE album_id=?",
+            (run_id, album_id),
+        )
+        # Touch album metadata
+        con.execute(
+            "UPDATE album SET item_count=?, updated_at=datetime('now') WHERE id=?",
+            (count, album_id),
+        )
+        return
+
+    # Changed/new album: upsert per-file rows using (path,size,mtime) deltas
+    for e in entries:
+        # Find existing row
+        row = con.execute(
+            "SELECT size_bytes, mtime_ns FROM track WHERE path=?",
+            (e.abspath,),
+        ).fetchone()
+
+        if row is None:
+            # New file
+            con.execute(
+                """
+                INSERT INTO track (path, album_id, size_bytes, mtime_ns, status, last_seen, seen_run_id, is_missing)
+                VALUES (?, ?, ?, ?, 'DIRTY_META', datetime('now'), ?, 0)
+                """,
+                (e.abspath, album_id, e.size, e.mtime_ns, run_id),
+            )
+        else:
+            old_size, old_mtime = row
+            if int(old_size) != int(e.size) or int(old_mtime) != int(e.mtime_ns):
+                # Changed
+                con.execute(
+                    """
+                    UPDATE track SET
+                      album_id=?,
+                      size_bytes=?,
+                      mtime_ns=?,
+                      status='DIRTY_META',
+                      last_seen=datetime('now'),
+                      seen_run_id=?,
+                      is_missing=0
+                    WHERE path=?
+                    """,
+                    (album_id, e.size, e.mtime_ns, run_id, e.abspath),
+                )
+            else:
+                # Unchanged file in changed album (e.g., sibling added/removed)
+                con.execute(
+                    "UPDATE track SET seen_run_id=?, is_missing=0 WHERE path=?",
+                    (run_id, e.abspath),
+                )
+
+    # Mark deletions within this album (files we didn't see this run)
+    con.execute(
+        """
+        UPDATE track
+           SET is_missing=1
+         WHERE album_id=?
+           AND (seen_run_id IS NULL OR seen_run_id<>?)
+        """,
+        (album_id, run_id),
+    )
+
+    # Update album fingerprint/count
+    con.execute(
+        "UPDATE album SET album_fingerprint=?, item_count=?, updated_at=datetime('now') WHERE id=?",
+        (fp, count, album_id),
+    )
+
+
+def changed_index(
+    con: sqlite3.Connection,
+    roots: List[str],
+    ignore_dirs: Optional[List[str]],
+    debounce_sec: int,
+    progress_every_albums: int = 200,
+) -> Tuple[int, int]:
+    """
+    Change-only run:
+      - group files by album
+      - compute fingerprint and compare
+      - update tracks seen/changed/missing accordingly
+    Returns: (albums_processed, tracks_touched)
+    """
+    # Run header (event)
+    con.execute(
+        "INSERT INTO run_event(started_at, command) VALUES(datetime('now'), 'inventory changed')"
+    )
+    run_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    albums = changed_collect_stats(roots, ignore_dirs=ignore_dirs, debounce_sec=debounce_sec)
+
+    con.execute("PRAGMA synchronous=NORMAL;")
+    con.execute("BEGIN;")
+
+    processed_albums = 0
+    touched_tracks = 0
+
+    # Process each album we saw this run
+    for aid, entries in albums.items():
+        # Count tracks we will touch roughly equals len(entries) for changed albums
+        before = con.total_changes
+        # Album folder string from first entry
+        album_folder = entries[0].album_folder if entries else ""
+        changed_apply_album(con, run_id, aid, album_folder, entries)
+        after = con.total_changes
+        touched_tracks += (after - before)
+        processed_albums += 1
+
+        if processed_albums % progress_every_albums == 0:
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [CHANGED] processed ~{processed_albums} albums…", flush=True)
+            con.commit()
+            con.execute("BEGIN;")
+
+    # Albums not seen at all this run → mark their tracks missing
+    # Build a temp table with seen album ids for this run
+    con.execute("CREATE TEMP TABLE IF NOT EXISTS _seen_albums(aid INTEGER PRIMARY KEY)")
+    con.execute("DELETE FROM _seen_albums")
+    con.executemany("INSERT INTO _seen_albums(aid) VALUES(?)", [(aid,) for aid in albums.keys()])
+
+    con.execute(
+        """
+        UPDATE track
+           SET is_missing=1
+         WHERE album_id IN (SELECT id FROM album WHERE id NOT IN (SELECT aid FROM _seen_albums))
+        """
+    )
+
+    con.commit()
+    return processed_albums, touched_tracks

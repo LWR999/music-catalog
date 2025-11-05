@@ -15,7 +15,8 @@ from music_catalog.inventory import (
 app = typer.Typer(help="Music catalog (read-only)")
 inventory_app = typer.Typer(help="Inventory operations")
 app.add_typer(inventory_app, name="inventory")
-
+db_app = typer.Typer(help="Database operations")
+app.add_typer(db_app, name="db")
 
 def _open_db(cfg):
     return connect(cfg.db_path)
@@ -101,3 +102,91 @@ def inventory_deep(
     con.commit()
     dur = time.time() - start
     rprint(f"[cyan]DEEP inventory[/cyan] updated {processed} tracks in {dur:.1f}s")
+
+@inventory_app.command("changed")
+def inventory_changed(
+    config: Path = typer.Option(None, "--config", exists=True, readable=True, dir_okay=False),
+    debounce_sec: int = typer.Option(5, "--debounce-sec", min=0, help="Ignore files modified in the last N seconds"),
+):
+    """
+    Change-only pass:
+      - Skips untouched albums via in-DB fingerprint
+      - Marks changed files DIRTY_META
+      - Flags deleted/missing files
+      - No sidecar files; SQLite only
+    """
+    cfg = load_config(str(config) if config else None)
+    con = _open_db(cfg)
+    migrate_db(con)
+
+    roots = [r["path"] for r in cfg.roots]
+    ignore = cfg.scan.get("ignore_patterns", [])
+    start = time.time()
+
+    from music_catalog.inventory import changed_index
+
+    albums, touched = changed_index(
+        con=con,
+        roots=roots,
+        ignore_dirs=ignore,
+        debounce_sec=debounce_sec,
+    )
+
+    dur = time.time() - start
+    rprint(f"[magenta]CHANGED inventory[/magenta] albums={albums}, touched_rows={touched}, "
+           f"time={dur:.1f}s")
+
+@db_app.command("clear")
+def db_clear(
+    config: Path = typer.Option(None, "--config", exists=True, readable=True, dir_okay=False),
+    hard: bool = typer.Option(False, "--hard", help="Delete the DB file and recreate it (fresh schema)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt for confirmation"),
+):
+    """
+    Clear the SQLite database.
+
+    Soft (default): DELETEs all rows (track/album/disc/run_event), VACUUM, keeping the schema.
+    Hard (--hard):  Removes the DB file and re-migrates a fresh schema.
+    """
+    cfg = load_config(str(config) if config else None)
+    db_path = cfg.db_path
+
+    if not yes:
+        mode = "HARD (delete file & recreate)" if hard else "SOFT (delete rows & vacuum)"
+        proceed = typer.confirm(f"About to clear database at {db_path} [{mode}]. Continue?")
+        if not proceed:
+            raise typer.Abort()
+
+    if hard:
+        # Close any open connection & remove file
+        try:
+            con = _open_db(cfg)
+            con.close()
+        except Exception:
+            pass
+        # Remove DB and sidecar files if present
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                p = Path(db_path + suffix)
+                if p.exists():
+                    p.unlink()
+            except Exception as e:
+                rprint(f"[red]Failed to remove {p}: {e}[/red]")
+        # Recreate
+        con = _open_db(cfg)
+        migrate_db(con)
+        rprint(f"[green]DB hard-reset complete[/green] → {db_path}")
+        return
+
+    # Soft clear
+    con = _open_db(cfg)
+    migrate_db(con)  # ensure schema is present
+    cur = con.cursor()
+    cur.execute("PRAGMA foreign_keys=OFF;")
+    # Order matters due to FKs
+    for tbl in ("track", "disc", "album", "run_event"):
+        cur.execute(f"DELETE FROM {tbl};")
+    cur.execute("PRAGMA foreign_keys=ON;")
+    cur.execute("VACUUM;")
+    con.commit()
+    rprint(f"[green]DB soft clear complete[/green] (rows deleted, schema preserved) → {db_path}")

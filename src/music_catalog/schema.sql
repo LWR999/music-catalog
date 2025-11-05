@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS album (
   disc_count INTEGER,
   track_count INTEGER,
   status TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  album_fingerprint TEXT,
+  item_count INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS disc (
@@ -56,9 +58,13 @@ CREATE TABLE IF NOT EXISTS track (
   tag_digest TEXT,          -- hash of normalized tags (for change detection)
   status TEXT,              -- NEW, DIRTY_META, DEEP_PENDING, TAGGED, ERROR
   last_error TEXT,
-  last_seen TEXT
+  last_seen TEXT,
+  seen_run_id INTEGER,
+  is_missing INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_track_album ON track(album_id);
 CREATE INDEX IF NOT EXISTS idx_track_mtime ON track(mtime_ns);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_disc_album_discno ON disc(album_id, disc_number);
+CREATE INDEX IF NOT EXISTS idx_track_album_seen ON track(album_id, seen_run_id);
+CREATE INDEX IF NOT EXISTS idx_track_missing ON track(is_missing);
