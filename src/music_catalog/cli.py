@@ -190,3 +190,90 @@ def db_clear(
     cur.execute("VACUUM;")
     con.commit()
     rprint(f"[green]DB soft clear complete[/green] (rows deleted, schema preserved) → {db_path}")
+
+@inventory_app.command("status")
+def inventory_status(
+    config: Path = typer.Option(None, "--config", exists=True, readable=True, dir_okay=False),
+    since_minutes: int = typer.Option(60, "--since-minutes", min=1, help="Show recent activity within this window"),
+):
+    """
+    Show catalog health at a glance:
+      - totals by state (dirty/tagged/error/missing)
+      - recent activity (last_seen within --since-minutes)
+      - album/disc counts and fingerprint coverage
+      - last run event
+    """
+    cfg = load_config(str(config) if config else None)
+    con = _open_db(cfg)
+    migrate_db(con)
+    cur = con.cursor()
+
+    # track-level stats
+    total = cur.execute("SELECT COUNT(*) FROM track").fetchone()[0]
+    dirty = cur.execute(
+        "SELECT COUNT(*) FROM track WHERE status IN ('DIRTY_META','NEW','DEEP_PENDING')"
+    ).fetchone()[0]
+    tagged = cur.execute("SELECT COUNT(*) FROM track WHERE status='TAGGED'").fetchone()[0]
+    errors = cur.execute("SELECT COUNT(*) FROM track WHERE status='ERROR'").fetchone()[0]
+    missing = cur.execute("SELECT COUNT(*) FROM track WHERE is_missing=1").fetchone()[0]
+
+    recent = cur.execute(
+        "SELECT COUNT(*) FROM track WHERE last_seen > datetime('now', ?)",
+        (f"-{int(since_minutes)} minutes",),
+    ).fetchone()[0]
+
+    # album/disc stats
+    albums = cur.execute("SELECT COUNT(*) FROM album").fetchone()[0]
+    albums_fp = cur.execute(
+        "SELECT COUNT(*) FROM album WHERE album_fingerprint IS NOT NULL"
+    ).fetchone()[0]
+    discs = cur.execute("SELECT COUNT(*) FROM disc").fetchone()[0]
+
+    # last run event
+    last = cur.execute(
+        "SELECT id, started_at, command FROM run_event ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+    # pretty print
+    rprint("[bold cyan]Inventory Status[/bold cyan]")
+    rprint(f"[white]DB:[/white] {cfg.db_path}")
+    if last:
+        rprint(f"[white]Last run:[/white] #{last[0]}  {last[1]}  ({last[2]})")
+
+    rprint("\n[bold]Tracks[/bold]")
+    rprint(f"  total   : {total:,}")
+    rprint(f"  dirty   : {dirty:,}")
+    rprint(f"  tagged  : {tagged:,}")
+    rprint(f"  errors  : {errors:,}")
+    rprint(f"  missing : {missing:,}")
+    rprint(f"  recent  : {recent:,} (last {since_minutes} min)")
+
+    rprint("\n[bold]Albums/Discs[/bold]")
+    rprint(f"  albums           : {albums:,}")
+    rprint(f"  with fingerprint : {albums_fp:,}")
+    rprint(f"  discs            : {discs:,}")
+
+    # optional quick breakdowns
+    by_status = cur.execute(
+        "SELECT status, COUNT(*) FROM track GROUP BY status ORDER BY COUNT(*) DESC"
+    ).fetchall()
+    rprint("\n[bold]By status[/bold]")
+    for s, n in by_status:
+        rprint(f"  {s or 'NULL':<12} {n:,}")
+
+    # codec/rate snapshot (top combos)
+    by_fmt = cur.execute(
+        """
+        SELECT COALESCE(codec,'?') AS codec,
+               COALESCE(bit_depth,0) AS bitd,
+               COALESCE(sample_rate_hz,0) AS rate,
+               COUNT(*) AS n
+        FROM track
+        GROUP BY 1,2,3
+        ORDER BY n DESC
+        LIMIT 8
+        """
+    ).fetchall()
+    rprint("\n[bold]Top codec/bit-depth/sample-rate[/bold]")
+    for codec, bitd, rate, n in by_fmt:
+        rprint(f"  {codec:<5} {bitd:>2}-bit @ {rate:>6} Hz  → {n:,}")

@@ -4,7 +4,7 @@ Read-only cataloger for large NAS-hosted music libraries (FLAC/DSF).
 Optimized for fast initial indexing, change-only refreshes, and gentle NAS I/O.
 No sidecars. No writes to the library. All state kept in SQLite.
 
-Features (current)
+Features
 
 SQLite schema + migrations (mc migrate)
 
@@ -16,6 +16,8 @@ CHANGE-ONLY pass: skips untouched albums via in-DB fingerprint (built from stat(
 DEEP pass: tag/artwork read for items marked DIRTY_META
 
 DB maintenance: soft clear (truncate) or hard reset (recreate file)
+
+Inventory status: quick health snapshot of totals, dirty queue, errors, recent activity, albums/discs
 
 Install
 # clone & create venv
@@ -33,7 +35,7 @@ pip install -e .
 mkdir -p /home/dl/development/.config/music-catalog
 cp ./config-example.yaml /home/dl/development/.config/music-catalog/dev.yaml
 
-# ensure DB path (from your config) exists and is writable, e.g.
+# ensure DB path exists and is writable
 sudo mkdir -p /var/lib/music-catalog/{state,reports}
 sudo chown -R dl:dl /var/lib/music-catalog
 
@@ -85,7 +87,7 @@ Creates/updates tables and indexes. Safe to run anytime.
 
 Threaded header probe (Mutagen) + single DB writer.
 
-# recommended defaults for NAS (Drobo-class)
+# recommended defaults for NAS
 mc inventory fast \
   --config /home/dl/development/.config/music-catalog/dev.yaml \
   --workers 8 \
@@ -117,7 +119,7 @@ Flags
 
 --debounce-sec N (default 5–10): ignore files modified in the last N seconds to avoid mid-copy/retag flapping
 
-Output
+Example output:
 
 [12:15:44] [CHANGED] processed ~200 albums…
 CHANGED inventory albums=1234, touched_rows=5678, time=89.1s
@@ -126,7 +128,10 @@ CHANGED inventory albums=1234, touched_rows=5678, time=89.1s
 
 Reads full tags/artwork for items marked DIRTY_META (from FAST/CHANGED).
 
-# gentle chunks on NAS
+# unlimited (overnight)
+mc inventory deep --config /home/dl/development/.config/music-catalog/dev.yaml
+
+# or gentle chunks on NAS
 mc inventory deep \
   --config /home/dl/development/.config/music-catalog/dev.yaml \
   --limit 500
@@ -138,13 +143,32 @@ mc db clear --config /home/dl/development/.config/music-catalog/dev.yaml -y
 # hard reset: delete DB file and recreate schema
 mc db clear --config /home/dl/development/.config/music-catalog/dev.yaml --hard -y
 
-How it works (at a glance)
+6) Inventory status (NEW)
 
-FAST: Walks library → Mutagen opens each file (header only) → upserts album + track rows → status DIRTY_META.
+Quick health snapshot: dirty queue size, tagged count, errors, recent activity, albums/discs, last run.
 
-CHANGED: Groups by album → computes fingerprint from relative_path|size|mtime_ns (in memory) → if unchanged, marks tracks seen and skips; if changed, updates per-file rows and flags deletions (is_missing=1). Stores fingerprint in SQLite only.
+mc inventory status \
+  --config /home/dl/development/.config/music-catalog/dev.yaml \
+  --since-minutes 60
 
-DEEP: For DIRTY_META tracks, loads tags/artwork and updates tag_digest, status TAGGED.
+
+Shows
+
+Tracks: total, dirty (DIRTY_META/NEW/DEEP_PENDING), tagged, errors, missing, recent activity (within window)
+
+Albums/Discs: counts and how many albums have stored fingerprints
+
+Last run: last run_event id, timestamp, and command
+
+Quick breakdowns: by status, and top (codec, bit_depth, sample_rate) combos
+
+How it works
+
+FAST: Walks library → Mutagen opens each file (header only) → upserts album + track → marks DIRTY_META.
+
+CHANGED: Groups by album → computes fingerprint from relative_path|size|mtime_ns (in memory) → if unchanged, marks tracks seen and skips; if changed, updates per-file rows and flags deletions (is_missing=1). Fingerprint is stored in SQLite only.
+
+DEEP: For DIRTY_META tracks, loads tags/artwork and updates tag_digest, sets status TAGGED.
 
 Guarantees
 
@@ -169,14 +193,9 @@ Useful shell checks
 # live count & updates
 watch -n 2 'sqlite3 /var/lib/music-catalog/catalog.db "select count(*) from track;"'
 
-# last-minute activity
+# dirty queue size
 sqlite3 /var/lib/music-catalog/catalog.db \
- 'select count(*) from track where last_seen>datetime("now","-60 seconds");'
-
-# system signals
-mpstat 1                 # high %iowait => NAS/IO latency bound
-ifstat -i eno1 1         # link utilization
-sudo iotop -oPa          # top I/O processes (install if missing)
+ 'select count(*) from track where status in ("DIRTY_META","NEW","DEEP_PENDING");'
 
 Troubleshooting
 
@@ -189,27 +208,16 @@ python -m music_catalog.cli --help
 
 No visible progress in DB during FAST: large --batch-size delays commits; use 1000–2000 while monitoring.
 
-OverflowError on disc IDs (older builds): fixed by using auto-increment disc.id and unique (album_id, disc_number).
+Historical disc-id overflow (old builds): fixed by using auto-increment disc.id and a unique (album_id, disc_number).
 
-Roadmap (short)
+Roadmap
 
 Stats/report commands (counts by codec/bit-depth/rate; missing art)
 
-Optional head/tail verification for suspicious retags (still read-only, ~128 KiB/sample)
+Optional head/tail verification for suspicious retags (read-only, ~128 KiB/sample)
 
 Album/disc rollups and tier compliance audits
 
 License
 
-MIT (or your preference).
-
-Operational baseline (recommended)
-
-# full seed
-mc migrate --config /home/dl/development/.config/music-catalog/dev.yaml
-mc inventory fast --config /home/dl/development/.config/music-catalog/dev.yaml --workers 8 --batch-size 1500
-mc inventory deep --config /home/dl/development/.config/music-catalog/dev.yaml --limit 500
-
-# maintenance
-mc inventory changed --config /home/dl/development/.config/music-catalog/dev.yaml --debounce-sec 10
-mc inventory deep --config /home/dl/development/.config/music-catalog/dev.yaml
+MIT
