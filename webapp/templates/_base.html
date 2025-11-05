@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title or 'Music Catalog' }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('home') }}">Music Catalog</a>
+    <nav>
+      <a href="{{ url_for('albums') }}">Albums</a>
+      <a href="{{ url_for('search') }}?q=">Search</a>
+      <a href="{{ url_for('utils_page') }}">Utils</a>
+    </nav>
+    <form class="search" action="{{ url_for('search') }}" method="get">
+      <input type="text" name="q" placeholder="Search artist, album, track…" value="{{ request.args.get('q','') }}">
+    </form>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

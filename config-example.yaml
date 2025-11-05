@@ -35,3 +35,7 @@ audits:
 normalization:
   unicode: "NFC"
   casefold_locale: "en"
+web:
+  deep_limit: 0         # 0 = unlimited
+  debounce_sec: 10      # for utils “changed” button
+  secret_key: "speakeralexacloth"

@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% block content %}
+<h1>{{ title }} <span class="muted">({{ total_albums }} total; showing {{ albums|length }})</span></h1>
+<div class="grid grid-albums"></h1>
+<div class="grid grid-albums">
+  {% for a in albums %}
+  <a class="card album" href="{{ url_for('album_detail', album_id=a.id) }}">
+    <img src="{{ url_for('static', filename='placeholder.jpg') }}" alt="cover">
+    <div class="album-meta">
+      <div class="artist">{{ a.folder_artist or 'Unknown Artist' }}</div>
+      <div class="title">{{ a.folder_title or 'Unknown Album' }}</div>
+      <div class="muted">{{ a.item_count or 0 }} tracks</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

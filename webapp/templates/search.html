@@ -1,0 +1,44 @@
+{% extends "_base.html" %}
+{% block content %}
+<h1>Search</h1>
+<form action="{{ url_for('search') }}" method="get" class="search-form">
+  <input type="text" name="q" value="{{ q }}" placeholder="Search">
+  <button type="submit">Go</button>
+</form>
+
+{% if q %}
+  <h2>Albums</h2>
+  <div class="grid grid-albums">
+  {% for a in results.albums %}
+    <a class="card album" href="{{ url_for('album_detail', album_id=a.id) }}">
+      <img src="{{ url_for('static', filename='placeholder.jpg') }}" alt="cover">
+      <div class="album-meta">
+        <div class="artist">{{ a.folder_artist or 'Unknown Artist' }}</div>
+        <div class="title">{{ a.folder_title or 'Unknown Album' }}</div>
+      </div>
+    </a>
+  {% else %}
+    <div class="muted">No matching albums.</div>
+  {% endfor %}
+  </div>
+
+  <h2>Tracks</h2>
+  <table class="tracks">
+    <thead><tr><th>Track</th><th>Album</th><th>Codec</th><th>Bit</th><th>Rate</th><th>Dur</th></tr></thead>
+    <tbody>
+    {% for t in results.tracks %}
+      <tr>
+        <td class="path">{{ t.path }}</td>
+        <td>{{ t.folder_artist }} — {{ t.folder_title }}</td>
+        <td>{{ t.codec or '' }}</td>
+        <td>{{ t.bit_depth or '' }}</td>
+        <td>{{ t.sample_rate_hz or '' }}</td>
+        <td>{{ '%.1f'|format(t.duration_sec) if t.duration_sec else '' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No matching tracks.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "_base.html" %}
+{% block content %}
+<h1>Utils</h1>
+
+<div class="grid grid-two">
+  <div class="card">
+    <h2>Inventory status</h2>
+    <ul class="kv">
+      <li><span>Total tracks</span><b>{{ stats.total }}</b></li>
+      <li><span>Dirty queue</span><b>{{ stats.dirty }}</b></li>
+      <li><span>Tagged</span><b>{{ stats.tagged }}</b></li>
+      <li><span>Errors</span><b>{{ stats.errors }}</b></li>
+      <li><span>Missing</span><b>{{ stats.missing }}</b></li>
+      <li><span>Albums</span><b>{{ stats.albums }}</b></li>
+      <li><span>Albums w/ fingerprint</span><b>{{ stats.albums_fp }}</b></li>
+      <li><span>Discs</span><b>{{ stats.discs }}</b></li>
+    </ul>
+    {% if last %}
+      <div class="muted">Last run: #{{ last.id }} — {{ last.started_at }} ({{ last.command }})</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Actions</h2>
+    <form method="post" action="{{ url_for('utils_run') }}">
+      <button class="btn" name="action" value="changed" type="submit">Run “inventory changed”</button>
+      <button class="btn" name="action" value="deep" type="submit">Run “inventory deep”</button>
+    </form>
+    <h3>Recent Jobs</h3>
+    <table class="jobs">
+      <thead><tr><th>Start</th><th>End</th><th>Cmd</th><th>RC</th></tr></thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr>
+          <td>{{ j.start }}</td>
+          <td>{{ j.end or '—' }}</td>
+          <td class="mono">{{ j.cmd }}</td>
+          <td>{{ j.rc if j.rc is not none else '…' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">No jobs yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

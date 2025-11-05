@@ -1,0 +1,35 @@
+{% extends "_base.html" %}
+{% block content %}
+<div class="album-hero">
+  <img class="cover-lg" src="{{ cover_url }}" alt="cover">
+  <div class="hero-meta">
+    <h1>{{ album.folder_artist or 'Unknown Artist' }}</h1>
+    <h2>{{ album.folder_title or 'Unknown Album' }}</h2>
+    <div class="muted">Tracks: {{ album.item_count or tracks|length }} · Updated: {{ album.updated_at or '—' }}</div>
+    {% if album.album_fingerprint %}<div class="muted">Fingerprint present</div>{% endif %}
+  </div>
+</div>
+
+<table class="tracks">
+  <thead>
+    <tr>
+      <th>File</th><th>Codec</th><th>Bit</th><th>Rate</th><th>Ch</th><th>Dur (s)</th><th>Status</th><th>Seen</th><th>Missing</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for t in tracks %}
+    <tr class="{{ 'missing' if t.is_missing else '' }}">
+      <td class="path">{{ t.path }}</td>
+      <td>{{ t.codec or '' }}</td>
+      <td>{{ t.bit_depth or '' }}</td>
+      <td>{{ t.sample_rate_hz or '' }}</td>
+      <td>{{ t.channels or '' }}</td>
+      <td>{{ '%.1f'|format(t.duration_sec) if t.duration_sec else '' }}</td>
+      <td>{{ t.status or '' }}</td>
+      <td>{{ t.last_seen or '' }}</td>
+      <td>{{ '✓' if t.is_missing else '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
