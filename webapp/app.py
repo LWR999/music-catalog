@@ -193,17 +193,56 @@ def create_app(config_path: str) -> Flask:
 
     @app.get("/albums")
     def albums():
+        # pagination
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        try:
+            per_page = max(12, min(240, int(request.args.get("per_page", "96"))))  # sane defaults
+        except ValueError:
+            per_page = 96
+
+        total = q_one("SELECT COUNT(*) AS n FROM album")["n"]
+        pages = max(1, (total + per_page - 1) // per_page)
+        if page > pages:
+            page = pages
+
+        offset = (page - 1) * per_page
+
+        rows = q_all(
+            """
+            SELECT id, folder_artist, folder_title, folder_path, item_count
+            FROM album
+            ORDER BY COALESCE(folder_artist,''), COALESCE(folder_title,'')
+            LIMIT ? OFFSET ?
+            """,
+            (per_page, offset),
+        )
+
+        return render_template(
+            "albums.html",
+            albums=rows,
+            title="Albums (A–Z)",
+            total_albums=total,
+            page=page,
+            pages=pages,
+            per_page=per_page,
+            showing=len(rows),
+        )
+
+    @app.get("/albums/all")
+    def albums_all():
+        total = q_one("SELECT COUNT(*) AS n FROM album")["n"]
         rows = q_all("""
           SELECT id, folder_artist, folder_title, folder_path, item_count
           FROM album
           ORDER BY COALESCE(folder_artist,''), COALESCE(folder_title,'')
-          LIMIT 500
         """)
-        total = q_one("SELECT COUNT(*) AS n FROM album")["n"]
         return render_template("albums.html",
-                               albums=rows,
-                               title="Albums (A–Z)",
-                               total_albums=total)
+                               albums=rows, title="All Albums",
+                               total_albums=total, page=1, pages=1,
+                               per_page=total, showing=len(rows))
 
 # ---------- entrypoint ----------
 

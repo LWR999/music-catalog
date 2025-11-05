@@ -1,17 +1,45 @@
 {% extends "_base.html" %}
 {% block content %}
-<h1>{{ title }} <span class="muted">({{ total_albums }} total; showing {{ albums|length }})</span></h1>
-<div class="grid grid-albums"></h1>
+<h1>{{ title }}
+  <span class="muted">
+    ({{ total_albums }} total{% if showing %}; showing {{ showing }}{% endif %}{% if pages and pages>1 %}; page {{ page }} of {{ pages }}{% endif %})
+  </span>
+</h1>
+
 <div class="grid grid-albums">
   {% for a in albums %}
-  <a class="card album" href="{{ url_for('album_detail', album_id=a.id) }}">
-    <img src="{{ url_for('static', filename='placeholder.jpg') }}" alt="cover">
-    <div class="album-meta">
-      <div class="artist">{{ a.folder_artist or 'Unknown Artist' }}</div>
-      <div class="title">{{ a.folder_title or 'Unknown Album' }}</div>
-      <div class="muted">{{ a.item_count or 0 }} tracks</div>
-    </div>
-  </a>
+    <a class="card album" href="{{ url_for('album_detail', album_id=a.id) }}">
+      <img src="{{ url_for('static', filename='placeholder.jpg') }}" alt="cover">
+      <div class="album-meta">
+        <div class="artist">{{ a.folder_artist or 'Unknown Artist' }}</div>
+        <div class="title">{{ a.folder_title or 'Unknown Album' }}</div>
+        <div class="muted">{{ a.item_count or 0 }} tracks</div>
+      </div>
+    </a>
+  {% else %}
+    <div class="muted">No albums found.</div>
   {% endfor %}
 </div>
+
+{% if pages and pages>1 %}
+  <div class="pager">
+    {% if page>1 %}
+      <a class="btn" href="{{ url_for('albums', page=page-1, per_page=per_page) }}">&larr; Prev</a>
+    {% else %}
+      <span class="btn disabled">&larr; Prev</span>
+    {% endif %}
+
+    <span class="muted">Page {{ page }} / {{ pages }}</span>
+
+    {% if page<pages %}
+      <a class="btn" href="{{ url_for('albums', page=page+1, per_page=per_page) }}">Next &rarr;</a>
+    {% else %}
+      <span class="btn disabled">Next &rarr;</span>
+    {% endif %}
+
+    <a class="btn link" href="{{ url_for('albums', page=1, per_page=96) }}">96/page</a>
+    <a class="btn link" href="{{ url_for('albums', page=1, per_page=192) }}">192/page</a>
+    <a class="btn link" href="{{ url_for('albums_all') }}">Show all</a>
+  </div>
+{% endif %}
 {% endblock %}
