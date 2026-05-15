@@ -1,0 +1,14 @@
+-- Migration 004: additional FLAC tag fields
+
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS label           VARCHAR(500);
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS catalog_number  VARCHAR(100);
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS original_year   SMALLINT;
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS disc_subtitle   VARCHAR(500);
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS rg_album_gain   REAL;
+ALTER TABLE albums ADD COLUMN IF NOT EXISTS rg_album_peak   REAL;
+
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS composer        VARCHAR(500);
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS comment         TEXT;
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rg_track_gain   REAL;
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rg_track_peak   REAL;
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS channels        SMALLINT;
