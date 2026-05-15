@@ -68,7 +68,10 @@ def _disc_number_from_dir(path):
 
 
 def _flacs_in_dir(d):
-    return sorted(f for f in d.iterdir() if f.is_file() and f.suffix.lower() == '.flac')
+    return sorted(
+        f for f in d.iterdir()
+        if f.is_file() and f.suffix.lower() == '.flac' and not f.name.startswith('._')
+    )
 
 
 def _is_album_dir(path):
@@ -76,7 +79,7 @@ def _is_album_dir(path):
     if not path.is_dir():
         return False
     for entry in path.iterdir():
-        if entry.is_file() and entry.suffix.lower() == '.flac':
+        if entry.is_file() and entry.suffix.lower() == '.flac' and not entry.name.startswith('._'):
             return True
         if entry.is_dir() and _is_disc_dir(entry):
             return True
@@ -91,6 +94,7 @@ def _content_hash(album_dir):
     entries = sorted(
         f"{f.relative_to(album_dir)}:{f.stat().st_size}"
         for f in album_dir.rglob('*.flac')
+        if not f.name.startswith('._')
     )
     return hashlib.md5('\n'.join(entries).encode()).hexdigest()
 
