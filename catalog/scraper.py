@@ -134,15 +134,17 @@ def _sort_name(name):
 class Scraper:
     def __init__(self, conn):
         self.conn = conn
+        self._nas_root = None  # set at start of each scrape; used for relative path storage
 
     # ------------------------------------------------------------------ public
 
     def full_scrape(self, nas_path):
         """Process every album on the NAS; remove any DB entries no longer present."""
         log.info("Full scrape: %s", nas_path)
+        self._nas_root = Path(nas_path)
         found, count, errors = set(), 0, 0
-        for album_dir, format_name, _ in self._walk_nas(Path(nas_path)):
-            path_str = str(album_dir)
+        for album_dir, format_name, _ in self._walk_nas(self._nas_root):
+            path_str = str(album_dir.relative_to(self._nas_root))
             found.add(path_str)
             try:
                 self._scrape_album(album_dir, format_name)
@@ -157,10 +159,11 @@ class Scraper:
     def incremental_scrape(self, nas_path):
         """Process only albums whose content has changed; remove deleted entries."""
         log.info("Incremental scrape: %s", nas_path)
+        self._nas_root = Path(nas_path)
         stored_hashes = self._load_content_hashes()
         found, count, errors = set(), 0, 0
-        for album_dir, format_name, _ in self._walk_nas(Path(nas_path)):
-            path_str = str(album_dir)
+        for album_dir, format_name, _ in self._walk_nas(self._nas_root):
+            path_str = str(album_dir.relative_to(self._nas_root))
             found.add(path_str)
             current_hash = _content_hash(album_dir)
             if stored_hashes.get(path_str) != current_hash:
@@ -251,7 +254,7 @@ class Scraper:
                 'year': year,
                 'is_compilation': is_compilation,
                 'disc_count': disc_count,
-                'nas_path': str(album_dir),
+                'nas_path': str(album_dir.relative_to(self._nas_root)),
                 'label': label,
                 'catalog_number': catalog_number,
                 'original_year': original_year,
@@ -404,7 +407,7 @@ class Scraper:
                 track_count,
                 disc_number,
                 meta.info.length,
-                str(flac_path),
+                str(flac_path.relative_to(self._nas_root)),
                 is_compilation,
                 meta.info.bits_per_sample,
                 meta.info.sample_rate,
