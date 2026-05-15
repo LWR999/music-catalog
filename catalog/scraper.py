@@ -1,6 +1,6 @@
+import hashlib
 import logging
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 from mutagen.flac import FLAC, FLACNoHeaderError
@@ -83,6 +83,18 @@ def _is_album_dir(path):
     return False
 
 
+def _content_hash(album_dir):
+    """
+    MD5 of sorted (relative_path, file_size) for all FLACs under album_dir.
+    Cheap (no file reads), reliable on NAS where mtime cannot be trusted.
+    """
+    entries = sorted(
+        f"{f.relative_to(album_dir)}:{f.stat().st_size}"
+        for f in album_dir.rglob('*.flac')
+    )
+    return hashlib.md5('\n'.join(entries).encode()).hexdigest()
+
+
 def _collect_flacs(album_dir):
     """
     Return sorted list of (disc_number, Path) for all FLACs in an album dir.
@@ -143,16 +155,15 @@ class Scraper:
         log.info("Full scrape complete — %d albums processed, %d errors.", count, errors)
 
     def incremental_scrape(self, nas_path):
-        """Process only albums modified since last_scraped; remove deleted entries."""
+        """Process only albums whose content has changed; remove deleted entries."""
         log.info("Incremental scrape: %s", nas_path)
-        last_scraped = self._load_last_scraped()
+        stored_hashes = self._load_content_hashes()
         found, count, errors = set(), 0, 0
         for album_dir, format_name, _ in self._walk_nas(Path(nas_path)):
             path_str = str(album_dir)
             found.add(path_str)
-            mtime = datetime.fromtimestamp(album_dir.stat().st_mtime, tz=timezone.utc)
-            scraped_at = last_scraped.get(path_str)
-            if scraped_at is None or mtime > scraped_at:
+            current_hash = _content_hash(album_dir)
+            if stored_hashes.get(path_str) != current_hash:
                 try:
                     self._scrape_album(album_dir, format_name)
                     count += 1
@@ -247,6 +258,7 @@ class Scraper:
                 'disc_subtitle': disc_subtitle,
                 'rg_album_gain': rg_album_gain,
                 'rg_album_peak': rg_album_peak,
+                'content_hash': _content_hash(album_dir),
             })
             self._upsert_genres(cur, album_id, genres)
             self._replace_tracks(cur, album_id, flacs, is_compilation)
@@ -283,12 +295,12 @@ class Scraper:
             INSERT INTO albums (
                 title, artist_id, format_id, year, is_compilation, disc_count,
                 nas_path, label, catalog_number, original_year, disc_subtitle,
-                rg_album_gain, rg_album_peak, last_scraped
+                rg_album_gain, rg_album_peak, content_hash, last_scraped
             ) VALUES (
                 %(title)s, %(artist_id)s, %(format_id)s, %(year)s, %(is_compilation)s,
                 %(disc_count)s, %(nas_path)s, %(label)s, %(catalog_number)s,
                 %(original_year)s, %(disc_subtitle)s, %(rg_album_gain)s,
-                %(rg_album_peak)s, now()
+                %(rg_album_peak)s, %(content_hash)s, now()
             )
             ON CONFLICT (nas_path) DO UPDATE SET
                 title          = EXCLUDED.title,
@@ -303,6 +315,7 @@ class Scraper:
                 disc_subtitle  = EXCLUDED.disc_subtitle,
                 rg_album_gain  = EXCLUDED.rg_album_gain,
                 rg_album_peak  = EXCLUDED.rg_album_peak,
+                content_hash   = EXCLUDED.content_hash,
                 last_scraped   = now()
             RETURNING id
             """,
@@ -358,6 +371,13 @@ class Scraper:
             if track_artist:
                 artist_id = self._get_or_create_artist(cur, track_artist)
 
+        # Prefer front cover (type 3); fall back to first picture available.
+        artwork = artwork_mime = None
+        if meta.pictures:
+            pic = next((p for p in meta.pictures if p.type == 3), meta.pictures[0])
+            artwork = pic.data
+            artwork_mime = pic.mime
+
         cur.execute(
             """
             INSERT INTO tracks (
@@ -365,13 +385,15 @@ class Scraper:
                 track_number, track_count, disc_number,
                 duration_secs, file_path, is_compilation,
                 bit_depth, sample_rate, channels,
-                composer, comment, rg_track_gain, rg_track_peak
+                composer, comment, rg_track_gain, rg_track_peak,
+                artwork, artwork_mime
             ) VALUES (
                 %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s,
-                %s, %s, %s, %s
+                %s, %s, %s, %s,
+                %s, %s
             )
             """,
             (
@@ -391,14 +413,16 @@ class Scraper:
                 _tag(meta, 'comment'),
                 _tag_float(meta, 'replaygain_track_gain'),
                 _tag_float(meta, 'replaygain_track_peak'),
+                artwork,
+                artwork_mime,
             ),
         )
 
     # --------------------------------------------------------- incremental helpers
 
-    def _load_last_scraped(self):
+    def _load_content_hashes(self):
         with self.conn.cursor() as cur:
-            cur.execute("SELECT nas_path, last_scraped FROM albums WHERE last_scraped IS NOT NULL")
+            cur.execute("SELECT nas_path, content_hash FROM albums WHERE content_hash IS NOT NULL")
             return {row[0]: row[1] for row in cur.fetchall()}
 
     def _remove_deleted(self, found_paths):
