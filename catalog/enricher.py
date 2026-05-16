@@ -36,6 +36,7 @@ class Enricher:
                     matched += 1
             except Exception:
                 log.exception("Error enriching album %d (%s – %s)", album_id, artist, title)
+                self.conn.rollback()
                 errors += 1
         log.info(
             "Enrichment complete — %d matched, %d no-match, %d errors.",
