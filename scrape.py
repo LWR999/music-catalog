@@ -2,9 +2,10 @@
 """CLI entry point for the music catalog scraper.
 
 Usage:
-    venv/bin/python scrape.py           # incremental (default, safe for cron)
-    venv/bin/python scrape.py --full    # full rebuild from scratch
-    venv/bin/python scrape.py -v        # verbose logging
+    venv/bin/python scrape.py                # incremental + enrich (safe for cron)
+    venv/bin/python scrape.py --full         # full rebuild + enrich
+    venv/bin/python scrape.py --no-enrich    # skip MusicBrainz enrichment step
+    venv/bin/python scrape.py -v             # verbose logging
 """
 
 import argparse
@@ -15,6 +16,7 @@ import sys
 from dotenv import load_dotenv
 
 from catalog.db import get_connection
+from catalog.enricher import Enricher
 from catalog.scraper import Scraper
 
 
@@ -25,6 +27,10 @@ def main():
     parser.add_argument(
         '--full', action='store_true',
         help="Full scrape: process every album regardless of last_scraped timestamp.",
+    )
+    parser.add_argument(
+        '--no-enrich', action='store_true',
+        help="Skip the MusicBrainz enrichment step after scraping.",
     )
     parser.add_argument(
         '-v', '--verbose', action='store_true',
@@ -50,8 +56,12 @@ def main():
             scraper.full_scrape(nas_path)
         else:
             scraper.incremental_scrape(nas_path)
+
+        if not args.no_enrich:
+            logging.info("Starting MusicBrainz enrichment…")
+            Enricher(conn).enrich_all(force=False)
     except Exception:
-        logging.exception("Scrape failed.")
+        logging.exception("Scrape/enrich failed.")
         sys.exit(1)
     finally:
         conn.close()
