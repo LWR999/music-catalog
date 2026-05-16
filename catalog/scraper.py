@@ -353,6 +353,7 @@ class Scraper:
                 "INSERT INTO album_genres (album_id, genre_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (album_id, genre_id),
             )
+        cur.execute("DELETE FROM genres WHERE id NOT IN (SELECT genre_id FROM album_genres)")
 
     def _replace_tracks(self, cur, album_id, flacs, album_is_compilation):
         cur.execute("DELETE FROM tracks WHERE album_id = %s", (album_id,))
