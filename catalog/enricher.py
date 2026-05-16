@@ -81,15 +81,29 @@ class Enricher:
             return _no_match()
 
         confidence = 'exact' if score == 100 else 'fuzzy'
-        return {
+        result = {
             'mb_release_id':   best.get('id'),
             'release_year':    _extract_year(best.get('date', '')),
             'record_label':    _extract_label(best),
             'release_country': best.get('country'),
             'mb_confidence':   confidence,
         }
+        log.debug(
+            "MB result (score=%s): id=%s year=%s label=%s country=%s",
+            score,
+            result['mb_release_id'],
+            result['release_year'],
+            result['record_label'],
+            result['release_country'],
+        )
+        return result
 
     def _store(self, album_id, result):
+        log.debug(
+            "Writing album %d: %s",
+            album_id,
+            {k: v for k, v in result.items() if v is not None},
+        )
         with self.conn.cursor() as cur:
             cur.execute(
                 """
