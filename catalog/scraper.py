@@ -3,7 +3,8 @@ import logging
 import re
 from pathlib import Path
 
-from mutagen.flac import FLAC, FLACNoHeaderError
+import mutagen.flac
+from mutagen.flac import FLAC
 
 log = logging.getLogger(__name__)
 
@@ -91,11 +92,12 @@ def _content_hash(album_dir):
     MD5 of sorted (relative_path, file_size) for all FLACs under album_dir.
     Cheap (no file reads), reliable on NAS where mtime cannot be trusted.
     """
-    entries = sorted(
-        f"{f.relative_to(album_dir)}:{f.stat().st_size}"
-        for f in album_dir.rglob('*.flac')
-        if not f.name.startswith('._')
-    )
+    try:
+        files = [f for f in album_dir.rglob('*.flac') if not f.name.startswith('._')]
+    except OSError as e:
+        log.warning("Cannot fully traverse %s: %s", album_dir, e)
+        files = []
+    entries = sorted(f"{f.relative_to(album_dir)}:{f.stat().st_size}" for f in files)
     return hashlib.md5('\n'.join(entries).encode()).hexdigest()
 
 
@@ -214,11 +216,16 @@ class Scraper:
             log.debug("No FLACs in %s, skipping.", album_dir)
             return
 
-        _, first_flac = flacs[0]
-        try:
-            meta = FLAC(str(first_flac))
-        except FLACNoHeaderError as e:
-            raise ValueError(f"Cannot read FLAC header: {e}") from e
+        meta = None
+        for _, flac_path_try in flacs:
+            try:
+                meta = FLAC(str(flac_path_try))
+                break
+            except mutagen.flac.error as e:
+                log.warning("Skipping unreadable FLAC %s: %s", flac_path_try, e)
+        if meta is None:
+            log.warning("No readable FLACs in %s, skipping album.", album_dir)
+            return
 
         folder_artist, folder_title = _parse_folder_name(album_dir.name)
 
@@ -358,8 +365,9 @@ class Scraper:
     def _insert_track(self, cur, album_id, disc_num_from_dir, flac_path, album_is_compilation):
         try:
             meta = FLAC(str(flac_path))
-        except FLACNoHeaderError as e:
-            raise ValueError(f"Cannot read FLAC header: {e}") from e
+        except mutagen.flac.error as e:
+            log.warning("Skipping unreadable FLAC %s: %s", flac_path, e)
+            return
 
         title = _tag(meta, 'title') or flac_path.stem
         track_number = _tag_int(meta, 'tracknumber')
