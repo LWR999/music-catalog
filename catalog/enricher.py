@@ -5,8 +5,8 @@ import musicbrainzngs
 log = logging.getLogger(__name__)
 
 musicbrainzngs.set_useragent("music-catalog", "0.1", "https://github.com/LWR999/music-catalog")
-# Honour MusicBrainz's 1 req/sec limit automatically
 musicbrainzngs.set_rate_limit(limit_or_interval=1.0)
+logging.getLogger('musicbrainzngs').setLevel(logging.WARNING)
 
 _MIN_SCORE = 85  # below this threshold treat as no match
 
@@ -73,7 +73,21 @@ class Enricher:
 
         releases = resp.get('release-list', [])
         if not releases:
+            log.debug("MB returned no candidates")
             return _no_match()
+
+        log.debug("MB candidates:")
+        for r in releases:
+            log.debug(
+                "  [%3s] %s – %s (%s) label=%s country=%s id=%s",
+                r.get('ext:score', '?'),
+                r.get('artist-credit-phrase', '?'),
+                r.get('title', '?'),
+                r.get('date', ''),
+                _extract_label(r),
+                r.get('country', ''),
+                r.get('id', ''),
+            )
 
         best = releases[0]
         score = int(best.get('ext:score', 0))
