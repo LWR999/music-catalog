@@ -1,3 +1,22 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv venv)",
+      "Bash(venv/bin/pip install *)",
+      "Bash(timeout 5 venv/bin/python app.py)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl -s \"http://127.0.0.1:5001/api/albums?sort=year_desc&page=1\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(a['year'], a['artist'][:30]\\) for a in d['albums'][:5]]\")",
+      "Bash(curl -s \"http://127.0.0.1:5001/api/albums?sort=title&page=1\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(a['title'][:40]\\) for a in d['albums'][:5]]\")",
+      "Bash(curl -s \"http://127.0.0.1:5001/api/albums/2\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['album']['nas_path']\\)\")",
+      "Read(//home/dl/development/music-catalog-console/**)",
+      "Bash(venv/bin/python app.py)",
+      "Bash(venv/bin/python *)"
+    ]
+  },
   "enableAllProjectMcpServers": false
 }
