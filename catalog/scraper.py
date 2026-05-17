@@ -87,18 +87,33 @@ def _is_album_dir(path):
     return False
 
 
+_TAG_SAMPLE = 65536  # 64 KB — covers all FLAC metadata blocks; audio frames start after
+
+
 def _content_hash(album_dir):
     """
-    MD5 of sorted (relative_path, file_size) for all FLACs under album_dir.
-    Cheap (no file reads), reliable on NAS where mtime cannot be trusted.
+    MD5 of sorted (relative_path, file_size, first-64KB) for all FLACs.
+    Reading the header catches tag-only edits (e.g. genre changes in Yate)
+    where the file size doesn't change due to FLAC padding blocks.
     """
     try:
         files = [f for f in album_dir.rglob('*.flac') if not f.name.startswith('._')]
     except OSError as e:
         log.warning("Cannot fully traverse %s: %s", album_dir, e)
         files = []
-    entries = sorted(f"{f.relative_to(album_dir)}:{f.stat().st_size}" for f in files)
-    return hashlib.md5('\n'.join(entries).encode()).hexdigest()
+
+    h = hashlib.md5()
+    for f in sorted(f.relative_to(album_dir).as_posix() for f in files):
+        full = album_dir / f
+        try:
+            with open(full, 'rb') as fh:
+                header = fh.read(_TAG_SAMPLE)
+        except OSError as e:
+            log.warning("Cannot read %s for hash: %s", full, e)
+            header = b''
+        h.update(f.encode())
+        h.update(header)
+    return h.hexdigest()
 
 
 def _collect_flacs(album_dir):
