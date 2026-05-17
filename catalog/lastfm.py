@@ -20,34 +20,25 @@ class LastFmSyncer:
         self.user = self.network.get_user(username)
 
     def sync_all(self, force=False, limit=None):
-        # Pull the user's full scrobble library and recent tracks up front —
-        # far cheaper than one album.getInfo call per DB record.
         scrobble_map = self._fetch_scrobble_map()
         last_played_map = self._fetch_last_played_map()
+        album_map = self._load_album_map()
 
-        albums = self._pending_albums(force, limit)
-        log.info("%d album(s) to sync with Last.fm.", len(albums))
+        to_sync = self._plan(scrobble_map, album_map, force, limit)
+        log.info("%d scrobbled album(s) to sync.", len(to_sync))
 
-        synced = no_match = errors = 0
-        for album_id, artist, title in albums:
-            key = (artist.lower(), title.lower())
-            if key not in scrobble_map:
-                log.warning("NO MATCH  %s – %s", artist, title)
-                self._mark_no_match(album_id)
-                no_match += 1
-                continue
+        synced = errors = 0
+        for album_id, artist, title, playcount in to_sync:
             try:
                 tags = self._fetch_tags(artist, title)
-                data = {
-                    'playcount':   scrobble_map[key],
-                    'last_played': last_played_map.get(key),
+                self._store(album_id, {
+                    'playcount':   playcount,
+                    'last_played': last_played_map.get((artist.lower(), title.lower())),
                     'tags':        tags,
-                }
-                self._store(album_id, data)
+                })
                 log.info(
-                    "SYNCED    %s – %s  (plays=%s, tags=[%s])",
-                    artist, title,
-                    data['playcount'],
+                    "SYNCED  %s – %s  (plays=%s, tags=[%s])",
+                    artist, title, playcount,
                     ', '.join(t['tag'] for t in tags),
                 )
                 synced += 1
@@ -56,15 +47,12 @@ class LastFmSyncer:
                 self.conn.rollback()
                 errors += 1
 
-        log.info(
-            "Last.fm sync complete — %d synced, %d no-match, %d errors.",
-            synced, no_match, errors,
-        )
+        log.info("Last.fm sync complete — %d synced, %d errors.", synced, errors)
 
     # ------------------------------------------------------------------ private
 
     def _fetch_scrobble_map(self):
-        """Return {(artist_lower, album_lower): playcount} for all user-scrobbled albums."""
+        """Return {(artist_lower, title_lower): (playcount, artist, title)} for all scrobbled albums."""
         log.info("Fetching scrobbled albums from Last.fm…")
         result = {}
         try:
@@ -73,15 +61,15 @@ class LastFmSyncer:
             for item in top_albums:
                 artist = item.item.artist.name
                 title = item.item.title
-                result[(artist.lower(), title.lower())] = int(item.weight)
-            log.info("Scrobble map built: %d unique albums.", len(result))
+                result[(artist.lower(), title.lower())] = (int(item.weight), artist, title)
+            log.info("Scrobble map: %d unique albums.", len(result))
         except (pylast.WSError, pylast.MalformedResponseError) as e:
             log.error("Could not fetch scrobbled albums: %s", e)
             raise
         return result
 
     def _fetch_last_played_map(self):
-        """Return {(artist_lower, album_lower): datetime} from recent scrobbles."""
+        """Return {(artist_lower, title_lower): datetime} from recent scrobbles."""
         log.info("Fetching recent tracks for last-played timestamps…")
         result = {}
         try:
@@ -94,10 +82,47 @@ class LastFmSyncer:
                 ts = datetime.fromtimestamp(int(played.timestamp), tz=timezone.utc)
                 if key not in result or ts > result[key]:
                     result[key] = ts
-            log.info("Last-played map built from %d recent scrobbles.", len(recent))
+            log.info("Last-played map: %d recent scrobbles.", len(recent))
         except (pylast.WSError, pylast.MalformedResponseError) as e:
             log.warning("Could not fetch recent tracks: %s", e)
         return result
+
+    def _load_album_map(self):
+        """Return {(artist_lower, title_lower): (album_id, lastfm_synced_at)} for all DB albums."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.id, ar.name, a.title, a.lastfm_synced_at
+                FROM   albums a
+                JOIN   artists ar ON ar.id = a.artist_id
+            """)
+            return {
+                (name.lower(), title.lower()): (album_id, synced_at)
+                for album_id, name, title, synced_at in cur.fetchall()
+            }
+
+    def _plan(self, scrobble_map, album_map, force, limit):
+        """Return list of (album_id, artist, title, playcount) to sync this run."""
+        cutoff = datetime.now(tz=timezone.utc).replace(microsecond=0)
+        to_sync = []
+        in_catalog = 0
+        for key, (playcount, artist, title) in scrobble_map.items():
+            if key not in album_map:
+                continue  # scrobbled but not in our catalog
+            in_catalog += 1
+            album_id, synced_at = album_map[key]
+            if not force and synced_at is not None:
+                age = (cutoff - synced_at.replace(tzinfo=timezone.utc)).total_seconds()
+                if age < 86400:
+                    continue  # synced within last 24 hours
+            to_sync.append((album_id, artist, title, playcount))
+
+        log.info(
+            "%d scrobbled album(s) found in catalog (of %d scrobbled, %d in DB).",
+            in_catalog, len(scrobble_map), len(album_map),
+        )
+        if limit is not None:
+            to_sync = to_sync[:int(limit)]
+        return to_sync
 
     def _fetch_tags(self, artist, title):
         """Return [{tag, rank}, …] for up to 5 top tags."""
@@ -109,29 +134,6 @@ class LastFmSyncer:
                 return []
             raise
         return [{'tag': t.item.name, 'rank': i + 1} for i, t in enumerate(raw)]
-
-    def _pending_albums(self, force, limit):
-        limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
-        with self.conn.cursor() as cur:
-            if force:
-                cur.execute(f"""
-                    SELECT a.id, ar.name, a.title
-                    FROM   albums a
-                    JOIN   artists ar ON ar.id = a.artist_id
-                    ORDER  BY ar.sort_name, a.title
-                    {limit_clause}
-                """)
-            else:
-                cur.execute(f"""
-                    SELECT a.id, ar.name, a.title
-                    FROM   albums a
-                    JOIN   artists ar ON ar.id = a.artist_id
-                    WHERE  a.lastfm_synced_at IS NULL
-                       OR  a.lastfm_synced_at < now() - interval '24 hours'
-                    ORDER  BY ar.sort_name, a.title
-                    {limit_clause}
-                """)
-            return cur.fetchall()
 
     def _store(self, album_id, data):
         with self.conn.cursor() as cur:
@@ -158,14 +160,6 @@ class LastFmSyncer:
                     """,
                     {'album_id': album_id, 'tag': tag['tag'], 'rank': tag['rank']},
                 )
-        self.conn.commit()
-
-    def _mark_no_match(self, album_id):
-        with self.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE albums SET lastfm_synced_at = now() WHERE id = %s",
-                (album_id,),
-            )
         self.conn.commit()
 
 
