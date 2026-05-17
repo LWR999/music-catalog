@@ -2,9 +2,10 @@
 """CLI entry point for the music catalog scraper.
 
 Usage:
-    venv/bin/python scrape.py                # incremental + enrich (safe for cron)
-    venv/bin/python scrape.py --full         # full rebuild + enrich
+    venv/bin/python scrape.py                # incremental + enrich + lastfm (safe for cron)
+    venv/bin/python scrape.py --full         # full rebuild + enrich + lastfm
     venv/bin/python scrape.py --no-enrich    # skip MusicBrainz enrichment step
+    venv/bin/python scrape.py --no-lastfm    # skip Last.fm sync step
     venv/bin/python scrape.py -v             # verbose logging
 """
 
@@ -17,6 +18,7 @@ from dotenv import load_dotenv
 
 from catalog.db import get_connection
 from catalog.enricher import Enricher
+from catalog.lastfm import LastFmSyncer
 from catalog.scraper import Scraper
 
 
@@ -31,6 +33,10 @@ def main():
     parser.add_argument(
         '--no-enrich', action='store_true',
         help="Skip the MusicBrainz enrichment step after scraping.",
+    )
+    parser.add_argument(
+        '--no-lastfm', action='store_true',
+        help="Skip the Last.fm sync step after scraping.",
     )
     parser.add_argument(
         '-v', '--verbose', action='store_true',
@@ -60,8 +66,12 @@ def main():
         if not args.no_enrich:
             logging.info("Starting MusicBrainz enrichment…")
             Enricher(conn).enrich_all(force=False)
+
+        if not args.no_lastfm:
+            logging.info("Starting Last.fm sync…")
+            LastFmSyncer(conn).sync_all(force=False)
     except Exception:
-        logging.exception("Scrape/enrich failed.")
+        logging.exception("Scrape/enrich/sync failed.")
         sys.exit(1)
     finally:
         conn.close()
