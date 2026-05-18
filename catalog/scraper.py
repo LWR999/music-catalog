@@ -90,6 +90,21 @@ def _is_album_dir(path):
 _TAG_SAMPLE = 65536  # 64 KB — covers all FLAC metadata blocks; audio frames start after
 
 
+def _album_size_bytes(album_dir):
+    """Sum of file sizes of all FLACs in the album directory tree."""
+    total = 0
+    try:
+        for f in album_dir.rglob('*.flac'):
+            if not f.name.startswith('._'):
+                try:
+                    total += f.stat().st_size
+                except OSError as e:
+                    log.warning("Cannot stat %s: %s", f, e)
+    except OSError as e:
+        log.warning("Cannot traverse %s for size: %s", album_dir, e)
+    return total
+
+
 def _content_hash(album_dir):
     """
     MD5 of sorted (relative_path, file_size, first-64KB) for all FLACs.
@@ -288,6 +303,7 @@ class Scraper:
                 'rg_album_gain': rg_album_gain,
                 'rg_album_peak': rg_album_peak,
                 'content_hash': _content_hash(album_dir),
+                'size_bytes': _album_size_bytes(album_dir),
             })
             self._upsert_genres(cur, album_id, genres)
             self._replace_tracks(cur, album_id, flacs, is_compilation)
@@ -324,12 +340,12 @@ class Scraper:
             INSERT INTO albums (
                 title, artist_id, format_id, year, is_compilation, disc_count,
                 nas_path, label, catalog_number, original_year, disc_subtitle,
-                rg_album_gain, rg_album_peak, content_hash, last_scraped
+                rg_album_gain, rg_album_peak, content_hash, size_bytes, last_scraped
             ) VALUES (
                 %(title)s, %(artist_id)s, %(format_id)s, %(year)s, %(is_compilation)s,
                 %(disc_count)s, %(nas_path)s, %(label)s, %(catalog_number)s,
                 %(original_year)s, %(disc_subtitle)s, %(rg_album_gain)s,
-                %(rg_album_peak)s, %(content_hash)s, now()
+                %(rg_album_peak)s, %(content_hash)s, %(size_bytes)s, now()
             )
             ON CONFLICT (nas_path) DO UPDATE SET
                 title          = EXCLUDED.title,
@@ -345,6 +361,7 @@ class Scraper:
                 rg_album_gain  = EXCLUDED.rg_album_gain,
                 rg_album_peak  = EXCLUDED.rg_album_peak,
                 content_hash   = EXCLUDED.content_hash,
+                size_bytes     = EXCLUDED.size_bytes,
                 last_scraped   = now()
             RETURNING id
             """,
