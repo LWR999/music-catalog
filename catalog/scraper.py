@@ -87,9 +87,6 @@ def _is_album_dir(path):
     return False
 
 
-_TAG_SAMPLE = 65536  # 64 KB — covers all FLAC metadata blocks; audio frames start after
-
-
 def _album_size_bytes(album_dir):
     """Sum of file sizes of all FLACs in the album directory tree."""
     total = 0
@@ -107,9 +104,9 @@ def _album_size_bytes(album_dir):
 
 def _content_hash(album_dir):
     """
-    MD5 of sorted (relative_path, file_size, first-64KB) for all FLACs.
-    Reading the header catches tag-only edits (e.g. genre changes in Yate)
-    where the file size doesn't change due to FLAC padding blocks.
+    MD5 of sorted (relative_path, mtime_ns, size) for all FLACs.
+    Stat-only: no file reads, safe over NAS. Tag edits always update mtime
+    even when FLAC padding keeps file size constant.
     """
     try:
         files = [f for f in album_dir.rglob('*.flac') if not f.name.startswith('._')]
@@ -118,16 +115,13 @@ def _content_hash(album_dir):
         files = []
 
     h = hashlib.md5()
-    for f in sorted(f.relative_to(album_dir).as_posix() for f in files):
-        full = album_dir / f
+    for rel in sorted(f.relative_to(album_dir).as_posix() for f in files):
+        full = album_dir / rel
         try:
-            with open(full, 'rb') as fh:
-                header = fh.read(_TAG_SAMPLE)
+            st = full.stat()
+            h.update(f'{rel}\x00{st.st_size}\x00{st.st_mtime_ns}'.encode())
         except OSError as e:
-            log.warning("Cannot read %s for hash: %s", full, e)
-            header = b''
-        h.update(f.encode())
-        h.update(header)
+            log.warning("Cannot stat %s for hash: %s", full, e)
     return h.hexdigest()
 
 
