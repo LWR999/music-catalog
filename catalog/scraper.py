@@ -178,27 +178,33 @@ class Scraper:
         """Process every album on the NAS; remove any DB entries no longer present."""
         log.info("Full scrape: %s", nas_path)
         self._nas_root = Path(nas_path)
+        all_albums = list(self._walk_nas(self._nas_root))
+        total = len(all_albums)
+        log.info("Found %d albums to process.", total)
         found, count, errors = set(), 0, 0
-        for album_dir, format_name, _ in self._walk_nas(self._nas_root):
+        for i, (album_dir, format_name, _) in enumerate(all_albums, 1):
             path_str = str(album_dir.relative_to(self._nas_root))
             found.add(path_str)
             try:
                 self._scrape_album(album_dir, format_name)
                 count += 1
-                log.info("[%d] %s", count, album_dir.name)
+                log.info("[%d/%d] %s", i, total, album_dir.name)
             except Exception:
                 errors += 1
                 log.exception("Failed to scrape %s", album_dir)
         self._remove_deleted(found)
-        log.info("Full scrape complete — %d albums processed, %d errors.", count, errors)
+        log.info("Full scrape complete — %d/%d albums processed, %d errors.", count, total, errors)
 
     def incremental_scrape(self, nas_path):
         """Process only albums whose content has changed; remove deleted entries."""
         log.info("Incremental scrape: %s", nas_path)
         self._nas_root = Path(nas_path)
         stored_hashes = self._load_content_hashes()
+        all_albums = list(self._walk_nas(self._nas_root))
+        total = len(all_albums)
+        log.info("Found %d albums to check.", total)
         found, count, errors = set(), 0, 0
-        for album_dir, format_name, _ in self._walk_nas(self._nas_root):
+        for i, (album_dir, format_name, _) in enumerate(all_albums, 1):
             path_str = str(album_dir.relative_to(self._nas_root))
             found.add(path_str)
             current_hash = _content_hash(album_dir)
@@ -206,12 +212,14 @@ class Scraper:
                 try:
                     self._scrape_album(album_dir, format_name)
                     count += 1
-                    log.info("[%d] %s", count, album_dir.name)
+                    log.info("[%d/%d] Updated: %s", i, total, album_dir.name)
                 except Exception:
                     errors += 1
                     log.exception("Failed to scrape %s", album_dir)
+            else:
+                log.debug("[%d/%d] Unchanged: %s", i, total, album_dir.name)
         self._remove_deleted(found)
-        log.info("Incremental scrape complete — %d albums updated, %d errors.", count, errors)
+        log.info("Incremental scrape complete — %d/%d albums updated, %d errors.", count, total, errors)
 
     # --------------------------------------------------------------- NAS walk
 
