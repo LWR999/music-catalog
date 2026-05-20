@@ -59,7 +59,7 @@ class Enricher:
                     SELECT a.id, ar.name, a.title
                     FROM   albums a
                     JOIN   artists ar ON ar.id = a.artist_id
-                    WHERE  a.mb_release_id IS NULL
+                    WHERE  a.mb_enriched_at IS NULL
                     ORDER  BY ar.sort_name, a.title
                 """)
             return cur.fetchall()
@@ -113,6 +113,19 @@ class Enricher:
         return result
 
     def _store(self, album_id, result):
+        if result['mb_release_id']:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM albums WHERE mb_release_id = %s AND id != %s",
+                    (result['mb_release_id'], album_id),
+                )
+                if cur.fetchone():
+                    log.warning(
+                        "MB release %s already assigned to another album; skipping for album %d",
+                        result['mb_release_id'], album_id,
+                    )
+                    result = {**_no_match(), 'mb_confidence': 'conflict'}
+
         log.debug(
             "Writing album %d: %s",
             album_id,
