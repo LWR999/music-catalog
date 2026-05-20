@@ -307,6 +307,7 @@ class Scraper:
                 'rg_album_peak': rg_album_peak,
                 'content_hash': _content_hash(album_dir),
                 'size_bytes': _album_size_bytes(album_dir),
+                'added_at': album_dir.stat().st_mtime,
             })
             self._upsert_genres(cur, album_id, genres)
             self._replace_tracks(cur, album_id, flacs, is_compilation)
@@ -343,12 +344,12 @@ class Scraper:
             INSERT INTO albums (
                 title, artist_id, format_id, year, is_compilation, disc_count,
                 nas_path, label, catalog_number, original_year, disc_subtitle,
-                rg_album_gain, rg_album_peak, content_hash, size_bytes, last_scraped
+                rg_album_gain, rg_album_peak, content_hash, size_bytes, last_scraped, added_at
             ) VALUES (
                 %(title)s, %(artist_id)s, %(format_id)s, %(year)s, %(is_compilation)s,
                 %(disc_count)s, %(nas_path)s, %(label)s, %(catalog_number)s,
                 %(original_year)s, %(disc_subtitle)s, %(rg_album_gain)s,
-                %(rg_album_peak)s, %(content_hash)s, %(size_bytes)s, now()
+                %(rg_album_peak)s, %(content_hash)s, %(size_bytes)s, now(), to_timestamp(%(added_at)s)
             )
             ON CONFLICT (nas_path) DO UPDATE SET
                 title          = EXCLUDED.title,
