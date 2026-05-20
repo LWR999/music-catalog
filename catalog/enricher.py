@@ -1,4 +1,5 @@
 import logging
+from difflib import SequenceMatcher
 
 import musicbrainzngs
 
@@ -8,7 +9,8 @@ musicbrainzngs.set_useragent("music-catalog", "0.1", "https://github.com/LWR999/
 musicbrainzngs.set_rate_limit(limit_or_interval=1.0)
 logging.getLogger('musicbrainzngs').setLevel(logging.WARNING)
 
-_MIN_SCORE = 85  # below this threshold treat as no match
+_MIN_SCORE = 85       # below this threshold treat as no match
+_MIN_TITLE_SIM = 0.6  # MB score can be 100 on artist alone; also require title similarity
 
 
 class Enricher:
@@ -92,6 +94,11 @@ class Enricher:
         best = releases[0]
         score = int(best.get('ext:score', 0))
         if score < _MIN_SCORE:
+            return _no_match()
+
+        title_sim = SequenceMatcher(None, title.lower(), best.get('title', '').lower()).ratio()
+        if title_sim < _MIN_TITLE_SIM:
+            log.debug("MB title mismatch (sim=%.2f): '%s' vs '%s'", title_sim, title, best.get('title', ''))
             return _no_match()
 
         confidence = 'exact' if score == 100 else 'fuzzy'
