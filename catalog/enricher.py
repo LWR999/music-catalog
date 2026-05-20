@@ -131,7 +131,7 @@ class Enricher:
                         "MB release %s already assigned to another album; skipping for album %d",
                         result['mb_release_id'], album_id,
                     )
-                    result = {**_no_match(), 'mb_confidence': 'conflict'}
+                    result = _no_match()
 
         log.debug(
             "Writing album %d: %s",
