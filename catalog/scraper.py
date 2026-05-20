@@ -229,6 +229,7 @@ class Scraper:
             if not format_dir.is_dir():
                 continue
             format_name = format_dir.name
+            log.info("Scanning %s…", format_name)
             for entry in sorted(format_dir.iterdir()):
                 if not entry.is_dir():
                     continue
