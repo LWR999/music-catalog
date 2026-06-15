@@ -69,7 +69,9 @@ def main():
 
         if not args.no_lastfm:
             logging.info("Starting Last.fm sync…")
-            LastFmSyncer(conn).sync_all(force=False)
+            syncer = LastFmSyncer(conn)
+            syncer.sync_all(force=False)
+            syncer.sync_play_counts()
     except Exception:
         logging.exception("Scrape/enrich/sync failed.")
         sys.exit(1)

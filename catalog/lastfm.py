@@ -1,8 +1,13 @@
+import json
 import logging
 import os
+import re
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
+import psycopg2.extras
 import pylast
 
 log = logging.getLogger(__name__)
@@ -49,7 +54,66 @@ class LastFmSyncer:
 
         log.info("Last.fm sync complete — %d synced, %d errors.", synced, errors)
 
+    def sync_play_counts(self):
+        """Bulk-fetch all top albums from Last.fm and write play_count for every DB album."""
+        api_key = os.environ["LASTFM_API_KEY"]
+        username = os.environ["LASTFM_USERNAME"]
+
+        log.info("Fetching top albums from Last.fm for play count sync…")
+        top = self._fetch_top_albums_paginated(api_key, username)
+        log.info("Fetched %d scrobbled albums from Last.fm.", len(top))
+
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.id, ar.name, a.title
+                FROM albums a JOIN artists ar ON ar.id = a.artist_id
+            """)
+            rows = cur.fetchall()
+
+        updates = [
+            (top.get((_normalize(artist), _normalize(title)), 0), album_id)
+            for album_id, artist, title in rows
+        ]
+
+        with self.conn.cursor() as cur:
+            psycopg2.extras.execute_batch(
+                cur,
+                "UPDATE albums SET play_count = %s WHERE id = %s",
+                updates,
+            )
+        self.conn.commit()
+
+        matched = sum(1 for pc, _ in updates if pc > 0)
+        log.info("play_count sync complete — %d/%d albums matched.", matched, len(updates))
+
     # ------------------------------------------------------------------ private
+
+    def _fetch_top_albums_paginated(self, api_key, username):
+        """Return {(norm_artist, norm_title): playcount} for all scrobbled albums, paginated."""
+        result = {}
+        page = 1
+        while True:
+            data = _lastfm_get(api_key, {
+                'method': 'user.getTopAlbums',
+                'user': username,
+                'period': 'overall',
+                'limit': '500',
+                'page': str(page),
+            })
+            albums = data.get('topalbums', {}).get('album', [])
+            if not albums:
+                break
+            for album in albums:
+                artist = album['artist']['name']
+                title = album['name']
+                result[(_normalize(artist), _normalize(title))] = int(album['playcount'])
+            attrs = data.get('topalbums', {}).get('@attr', {})
+            total_pages = int(attrs.get('totalPages', 1))
+            if page >= total_pages:
+                break
+            page += 1
+            time.sleep(_CALL_INTERVAL)
+        return result
 
     def _fetch_scrobble_map(self):
         """Return {(artist_lower, title_lower): (playcount, artist, title)} for all scrobbled albums."""
@@ -167,3 +231,18 @@ class LastFmSyncer:
 
 def _is_not_found(exc):
     return getattr(exc, 'status', None) == 6 or 'not found' in str(exc).lower()
+
+
+def _normalize(s):
+    """Lowercase, strip punctuation, collapse whitespace — for fuzzy album matching."""
+    s = s.lower()
+    s = re.sub(r'[^\w\s]', '', s)
+    return re.sub(r'\s+', ' ', s).strip()
+
+
+def _lastfm_get(api_key, params):
+    """GET the Last.fm API and return parsed JSON."""
+    p = dict(params, api_key=api_key, format='json')
+    url = 'https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(p)
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        return json.loads(resp.read())
