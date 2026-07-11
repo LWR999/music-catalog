@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 from catalog.db import get_connection
 from catalog.enricher import Enricher
+from catalog.genre import GenreNormaliser
 from catalog.lastfm import LastFmSyncer
 from catalog.scraper import Scraper
 
@@ -37,6 +38,10 @@ def main():
     parser.add_argument(
         '--no-lastfm', action='store_true',
         help="Skip the Last.fm sync step after scraping.",
+    )
+    parser.add_argument(
+        '--no-genre', action='store_true',
+        help="Skip the genre normalisation step after scraping.",
     )
     parser.add_argument(
         '-v', '--verbose', action='store_true',
@@ -72,6 +77,10 @@ def main():
             syncer = LastFmSyncer(conn)
             syncer.sync_all(force=False)
             syncer.sync_play_counts()
+
+        if not args.no_genre:
+            logging.info("Starting genre normalisation…")
+            GenreNormaliser(conn, nas_path).normalise_pending()
     except Exception:
         logging.exception("Scrape/enrich/sync failed.")
         sys.exit(1)

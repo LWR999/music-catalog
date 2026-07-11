@@ -1,3 +1,4 @@
+anthropic==0.105.2
 mutagen==1.47.0
 musicbrainzngs==0.7.1
 pylast==5.3.0
