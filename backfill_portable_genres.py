@@ -12,7 +12,13 @@ from dotenv import load_dotenv
 from mutagen.flac import FLAC
 
 from catalog.db import get_connection
-from catalog.genre import _normalize
+
+
+def _normalize(s):
+    import re
+    s = s.lower()
+    s = re.sub(r'[^\w\s]', '', s)
+    return re.sub(r'\s+', ' ', s).strip()
 
 log = logging.getLogger(__name__)
 
