@@ -98,6 +98,19 @@ class GenreNormaliser:
                 errors += 1
             time.sleep(_CALL_INTERVAL)
         log.info("Genre normalisation complete — %d done, %d errors.", done, errors)
+        self._delete_orphaned_genres()
+
+    def _delete_orphaned_genres(self):
+        """Delete genre rows left with no albums after normalisation repoints them."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM genres g
+                WHERE NOT EXISTS (SELECT 1 FROM album_genres ag WHERE ag.genre_id = g.id)
+            """)
+            deleted = cur.rowcount
+        self.conn.commit()
+        if deleted:
+            log.info("Deleted %d orphaned genre(s).", deleted)
 
     def _load_albums(self, pending_only):
         with self.conn.cursor() as cur:
